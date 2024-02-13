@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 
-# Copyright 2021, U2FsdGVkX1 <U2FsdGVkX1@gmail.com>
+# Copyright 2024, dabao1955 <dabao1955@163.com>
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -39,8 +39,10 @@ _apk() {
 	"$APK" $APK_OPTS "$@"
 }
 
-mirror=http://dl-cdn.alpinelinux.org
+mirror=http://dl-cdn.alpinelinux.org/alpine
 version=edge
+asia='Asia/Shanghai'
+cpu_type=$(uname -m)
 
 download_and_extract_bootstrap() {
 	download >/tmp/apk
@@ -209,9 +211,6 @@ main(){
 	configure_network
 	finalize
 }
-
-asia='Asia/Shanghai'
-cpu_type=$(uname -m)
 
 while getopts "s:c:m:h:" opt; do
 	case $opt in
