@@ -46,6 +46,14 @@ cpu_type=$(uname -m)
 
 download_and_extract_bootstrap() {
 	download >/tmp/apk
+	sha256sum /tmp/apk >/tmp/1.txt
+
+	export APK_SHA256=$(cat 1.txt)
+	if [ ! $APK_TOOLS_SHA256 = $APK_SHA256 ]; then
+	    echo "Check failed."
+	    exit 127
+	fi
+
 	mkdir -p /alpine
 	printf '%s\n' \
 	"$mirror/$version/main" \
@@ -97,10 +105,10 @@ configure_chroot() {
 }
 
 install_packages() {
-	chroot_exec "alpine-make-rootfs --branch $version --timezone '$asia' -p linux-lts,ca-certificates,openssh-server,openssh-client,linux-headers,linux-firmware,nano /mnt"
+	chroot_exec "alpine-make-rootfs --branch $version --timezone '$asia' -p linux-lts,ca-certificates,openssh-server,openssh-client,linux-headers,linux-firmware,grub2,nano /mnt"
 	/usr/sbin/update-ca-certificates
 	# Here we actually want the words to split, therefore no quotes.
-	unset patterns packages
+	unset packages
 }
 
 restore_root_pass() {
