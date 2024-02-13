@@ -105,7 +105,8 @@ configure_chroot() {
 }
 
 install_packages() {
-	chroot_exec "alpine-make-rootfs --branch $version --timezone '$asia' -p linux-lts,ca-certificates,openssh-server,openssh-client,linux-headers,linux-firmware,grub2,nano /mnt"
+	packages="linux-lts ca-certificates openssh-server openssh-client linux-headers linux-firmware grub nano"
+	chroot_exec "alpine-make-rootfs --branch $version --timezone '$asia' -m $mirror -p $packages /mnt"
 	/usr/sbin/update-ca-certificates
 	# Here we actually want the words to split, therefore no quotes.
 	unset packages
