@@ -1,0 +1,260 @@
+#!/usr/bin/env sh
+
+# Copyright 2021, U2FsdGVkX1 <U2FsdGVkX1@gmail.com>
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+set -e
+
+[ "$(id -u)" -ne 0 ] && echo "This script must be run as root" && exit 1
+
+# SHA256 checksum of $APK_TOOLS_URI for each architecture.
+export HOST_ARCH=$(arch)
+case "$HOST_ARCH" in                                                                                              aarch64) : ${APK_TOOLS_SHA256:="d49a63b8b6780fc1342d3e7e14862aa006c30bafbf74beec8e1dfe99e6f89471"};;
+        x86_64) : ${APK_TOOLS_SHA256:="1c65115a425d049590bec7c729c7fd88357fbb090a6fc8c31d834d7b0bc7d6f2"};;                                                                                                         esac                                                                                                      
+: ${APK_TOOLS_URI:="https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.0/$HOST_ARCH/apk.static"}                                                                                               : ${APK:="/tmp/apk"}
+: ${APK_OPTS:="--no-progress"}
+
+if command -v wget >/dev/null 2>&1; then
+	download() { wget -O- "$APK_TOOLS_URI"; }
+elif command -v curl >/dev/null 2>&1; then
+	download() { curl -fL "$APK_TOOLS_URI"; }
+else
+	echo "This script needs curl or wget" >&2
+	exit 2
+fi
+
+_apk() {
+	"$APK" $APK_OPTS "$@"
+}
+
+mirror=http://dl-cdn.alpinelinux.org
+version=edge
+
+download_and_extract_bootstrap() {
+	download >/tmp/apk
+	mkdir -p /alpine
+	printf '%s\n' \
+	"$mirror/$version/main" \
+	"$mirror/$version/community" \
+	$EXTRA_REPOS \
+	> /etc/apk/repositories
+	_apk add --root /alpine --initdb alpine-baselayout busybox busybox-suid musl-utils alpine-release alpine-make-rootfs busybox-static bash
+	if grep -E "^nameserver\s+127\." /etc/resolv.conf > /dev/null; then
+		echo "nameserver 8.8.8.8" > /alpine/etc/resolv.conf
+	else
+		cp -Lp /etc/resolv.conf /alpine/etc
+	fi
+
+	mount -t proc /proc /alpine/proc
+	mount --make-rslave --rbind /sys /alpine/sys
+	mount --make-rslave --rbind /dev /alpine/dev
+	mount --make-rslave --rbind /run /alpine/run
+	mount --bind / /alpine/mnt
+}
+
+save_root_pass() {
+	grep "^root:" /etc/shadow > /alpine/root.passwd
+	chmod 0600 /alpine/root.passwd
+}
+
+backup_old_files() {
+	cp -Lp /etc/fstab /alpine/etc
+	if [ -d /etc/ssh ]; then
+		mkdir /alpine/ssh
+		cp -Lp /etc/ssh/ssh_host* /alpine/ssh
+	fi
+	if [ -d /root/.ssh ]; then
+		cp -Lpr /root/.ssh /alpine/key
+	fi
+}
+
+delete_all() {
+	# Delete *all* files from /
+	find / \( ! -path '/dev/*' -and ! -path '/proc/*' -and ! -path '/sys/*' -and ! -path '/selinux/*' -and ! -path '/tmp/*' -and ! -path '/alpine/*' -and ! -name '/swapfile' \) -delete 2>/dev/null || true
+}
+
+chroot_exec() {
+	"/alpine/busybox-static chroot" /alpine /bin/bash -c "$*"
+
+configure_chroot() {
+	chroot_exec 'mkdir /mnt/etc'
+	chroot_exec 'mkdir /mnt/etc/apk'
+	chroot_exec 'cp /etc/apk/repositories /mnt/etc/apk/repositories'
+}
+
+install_packages() {
+	chroot_exec "alpine-make-rootfs --branch $version --timezone '$asia' -p linux-lts,ca-certificates,openssh-server,openssh-client,linux-headers,linux-firmware,nano /mnt"
+	/usr/sbin/update-ca-certificates
+	# Here we actually want the words to split, therefore no quotes.
+	unset patterns packages
+}
+
+restore_root_pass() {
+	# If the root password is not set, use vps2alpine
+	if grep -E -q '^root:.?:' /alpine/root.passwd; then
+		echo "root:vps2alpine" | chpasswd
+	else
+		sed -i '/^root:/d' /etc/shadow
+		cat /alpine/root.passwd >> /etc/shadow
+	fi
+}
+
+cleanup() {
+	mv /alpine/etc/fstab /etc/fstab
+	if [ -d /alpine/ssh ]; then
+		chmod -R 0600 /alpine/ssh
+		mv /alpine/ssh/* /etc/ssh
+	fi
+	if [ -d /alpine/key ]; then
+		mv /alpine/key /root/.ssh
+	fi
+
+	awk '/\/alpine/ {print $2}' /proc/mounts | sort -r | xargs umount -nl || true
+	rm -rf /alpine
+}
+
+configure_bootloader() {
+	grep -q '^[[:space:]]*eth' /proc/net/dev && sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/&net.ifnames=0 /' /etc/default/grub
+
+	systemd-machine-id-setup && dracut -f --regenerate-all
+	if [ -d /sys/firmware/efi ]; then
+		efi_directory=$(df --type=vfat | tail -n1 | awk '{print $6}')
+		/usr/sbin/grub2-install --recheck --removable --efi-directory="$efi_directory"
+		cat > /etc/sysconfig/bootloader <<-EOF
+			LOADER_TYPE="grub2-efi"
+		EOF
+	else
+		root_dev=$(findmnt -no SOURCE /)
+		root_dev=$(lsblk -npsro TYPE,NAME "$root_dev" | awk '$1 == "disk" {print $2}' | head -1)
+		/usr/sbin/grub2-install --recheck --force "$root_dev"
+		cat > /etc/sysconfig/bootloader <<-EOF
+			LOADER_TYPE="grub2"
+		EOF
+	fi
+	/sbin/update-bootloader
+	unset efi_directory root_dev
+}
+
+configure_network() {
+	for dev in $(ip -br l | awk '$2 == "UP" {split($1, r, "@"); print r[1]}'); do
+		ip="$(ip -br a s "$dev" scope global | awk '{for(i=3;i<=NF;i++) printf "IPADDR%d=%s\n", i-3, $i}')"
+		routes="$(ip -4 r s default; ip -6 r s default)"
+		gateway="$(echo "$routes" | awk -v dev="$dev" '$5 == dev {printf "default %s\n", $3}')"
+
+		cat > "/etc/sysconfig/network/ifcfg-$dev" <<-EOF
+			STARTMODE=auto
+			$ip
+		EOF
+		cat > "/etc/sysconfig/network/ifroute-$dev" <<-EOF
+			$gateway
+		EOF
+	done
+	unset dev ip routes gateway
+}
+
+finalize() {
+	if [ -d "sshd_config.d" ]; then
+		cat > "/etc/ssh/sshd_config.d/PermitRootLogin.conf" <<-EOF
+			PermitRootLogin yes
+		EOF
+	elif [ "$(grep -w "^PermitRootLogin yes" /etc/ssh/sshd_config)" = "" ]; then
+		mkdir -p /etc/ssh/sshd_config.d
+		cat > "/etc/ssh/sshd_config.d/PermitRootLogin.conf" <<-EOF
+			PermitRootLogin yes
+		EOF
+	fi
+	rc-update add sshd default
+	rc-service sshd start
+	#rc_add sysinit devfs dmesg mdev hwdrivers
+	#[ -e etc/init.d/cgroups ] && rc_add sysinit cgroups ||:  # since v3.8
+
+	#rc_add boot modules hwclock swap hostname sysctl bootmisc syslog
+	# urandom was renamed to seedrng in v3.17
+	#[ -e etc/init.d/seedrng ] && rc_add boot seedrng || rc_add boot urandom
+	#rc_add shutdown killprocs savecache mount-ro
+
+	cat <<-EOF
+		Hi,
+		your VM has successfully been reimaged with Alpine Linux.
+
+		When you are finished with your post-installation, you'll need to reboot the VM the rough way:
+		# sync ; reboot -f
+
+		Then you'll be able to connect to your VM using SSH and to login using your old root password (or "vps2alpine" if you didn't have a root password).
+	EOF
+}
+
+main(){
+	download_and_extract_bootstrap
+	save_root_pass
+	backup_old_files
+	delete_all
+	configure_chroot
+	install_packages
+	restore_root_pass
+	cleanup
+	configure_bootloader
+	configure_network
+	finalize
+}
+
+asia='Asia/Shanghai'
+cpu_type=$(uname -m)
+
+while getopts "s:c:m:h:" opt; do
+	case $opt in
+	s)
+		version="$OPTARG"
+		case $version in
+		*v3.16|*v3.17|*v3.18|*v3.19)
+			echo "version above v3.15 are currently not supported. You can try installing v3.15 and upgrading manually afterwards."
+			exit 1
+			;;
+		*edge*)
+			# Fixes URI for the leap distribution.
+			container="containers" ;;
+		esac
+		;;
+	c)
+		container="$OPTARG"
+		;;
+	m)
+		mirror="$OPTARG"
+		;;
+	h)
+		cat <<-EOF
+			usage: ${0##*/} [options]
+
+			  Options:
+				-h                           Show help messages.
+				-s system version            Set OS version (Default: edge).
+				-a asia                      Set default zone (Default: 'Asia/Shanghai').
+				-m mirror                    Set mirror address (Default: http://dl-cdn.alpinelinux.org/alpine)..
+		EOF
+		exit 0
+		;;
+	:)
+		printf "%s: option requires an argument -- '%s'\n" "${0##*/}" "$OPTARG" >&2
+		exit 1
+		;;
+	?)
+		printf "%s: invalid option -- '%s'\n" "${0##*/}" "$OPTARG" >&2
+		exit 1
+		;;
+	esac
+done
+
+cd /
+main
