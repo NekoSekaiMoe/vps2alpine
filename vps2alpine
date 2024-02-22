@@ -55,13 +55,13 @@ download_and_extract_bootstrap() {
 	#fi
 
 	mkdir -p /alpine
-	mkdir -p /etc/apk
+	mkdir -p /alpine/etc/apk
 	chmod 755 -R /tmp/apk*
 	printf '%s\n' \
 	"$mirror/$version/main" \
 	"$mirror/$version/community" \
 	$EXTRA_REPOS \
-	> /etc/apk/repositories
+	> /alpine/etc/apk/repositories
 	_apk add --allow-untrusted --root /alpine --initdb alpine-baselayout busybox busybox-suid musl-utils alpine-release alpine-make-rootfs busybox-static bash
 	if grep -E "^nameserver\s+127\." /etc/resolv.conf > /dev/null; then
 		echo "nameserver 8.8.8.8" > /alpine/etc/resolv.conf
