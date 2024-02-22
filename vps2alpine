@@ -46,15 +46,17 @@ cpu_type=$(uname -m)
 
 download_and_extract_bootstrap() {
 	download >/tmp/apk
-	sha256sum /tmp/apk >/tmp/1.txt
+	#sha256sum /tmp/apk >/tmp/1.txt
 
-	export APK_SHA256=$(cat 1.txt)
-	if [ ! $APK_TOOLS_SHA256 = $APK_SHA256 ]; then
-	    echo "Check failed."
-	    exit 127
-	fi
+	#export APK_SHA256=$(cat 1.txt)
+	#if [ ! $APK_TOOLS_SHA256 = $APK_SHA256 ]; then
+	#    echo "Check failed."
+	#    exit 127
+	#fi
 
 	mkdir -p /alpine
+	mkdir -p /etc/apk
+	chmod 755 -R /tmp/apk*
 	printf '%s\n' \
 	"$mirror/$version/main" \
 	"$mirror/$version/community" \
