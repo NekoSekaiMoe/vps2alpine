@@ -62,7 +62,7 @@ download_and_extract_bootstrap() {
 	"$mirror/$version/community" \
 	$EXTRA_REPOS \
 	> /etc/apk/repositories
-	_apk add --root /alpine --initdb alpine-baselayout busybox busybox-suid musl-utils alpine-release alpine-make-rootfs busybox-static bash
+	_apk add --allow-untrusted --root /alpine --initdb alpine-baselayout busybox busybox-suid musl-utils alpine-release alpine-make-rootfs busybox-static bash
 	if grep -E "^nameserver\s+127\." /etc/resolv.conf > /dev/null; then
 		echo "nameserver 8.8.8.8" > /alpine/etc/resolv.conf
 	else
@@ -98,7 +98,7 @@ delete_all() {
 }
 
 chroot_exec() {
-	"/alpine/busybox-static chroot" /alpine /bin/bash -c "$*"
+	"/alpine/bin/busybox-static chroot" /alpine /bin/bash -c "$*"
 }
 
 configure_chroot() {
