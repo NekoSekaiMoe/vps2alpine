@@ -98,7 +98,7 @@ delete_all() {
 }
 
 chroot_exec() {
-	"/alpine/bin/busybox-static chroot" /alpine /bin/bash -c "$*"
+	"/alpine/bin/busybox.static chroot" /alpine /bin/bash -c "$*"
 }
 
 configure_chroot() {
