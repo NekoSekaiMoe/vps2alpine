@@ -97,6 +97,7 @@ delete_all() {
 
 chroot_exec() {
 	"/alpine/busybox-static chroot" /alpine /bin/bash -c "$*"
+}
 
 configure_chroot() {
 	chroot_exec 'mkdir /mnt/etc'
